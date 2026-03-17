@@ -3,6 +3,14 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import {
+    applyRangeUpdate,
+    createInitialConfig,
+    effectiveOrder,
+    normalizeAlias,
+    normalizeConfig,
+    normalizeRange,
+} from './logic.js';
 
 const SYS_BACKLIGHT_DIR = '/sys/class/backlight';
 
@@ -247,7 +255,7 @@ export default class BacklightControllerPreferences extends ExtensionPreferences
     }
 
     _setAlias(name, alias) {
-        const normalizedAlias = typeof alias === 'string' ? alias.trim() : '';
+        const normalizedAlias = normalizeAlias(alias);
         const existing = this._config.backlights[name] ?? {};
         const currentAlias = typeof existing.alias === 'string' ? existing.alias : '';
         if (normalizedAlias === currentAlias)
@@ -262,15 +270,7 @@ export default class BacklightControllerPreferences extends ExtensionPreferences
     }
 
     _setDeviceRange(name, min, max) {
-        const existing = this._config.backlights[name] ?? {};
-        const nextMin = min ?? existing.min ?? 0;
-        const nextAutoMax = existing.autoMax ?? nextMin + 1;
-        const nextMax = max ?? existing.max ?? nextAutoMax;
-        this._config.backlights[name] = {
-            ...existing,
-            min: Math.min(nextMin, nextMax - 1),
-            max: Math.max(nextMax, nextMin + 1),
-        };
+        this._config.backlights[name] = applyRangeUpdate(this._config.backlights[name], min, max);
         this._saveConfig();
     }
 
@@ -289,13 +289,10 @@ export default class BacklightControllerPreferences extends ExtensionPreferences
 
     _getRangeForDevice(name) {
         const info = this._backlightInfo.get(name);
-        const existing = this._config.backlights[name] ?? {};
-        const min = Number.isInteger(existing.min) ? existing.min : 0;
-        const detectedMax = info?.detectedMax ?? null;
-        const autoMax = Number.isInteger(existing.autoMax) ? existing.autoMax :
-            (detectedMax ?? 1);
-        const candidateMax = Number.isInteger(existing.max) ? existing.max : autoMax;
-        const max = Math.max(candidateMax, min + 1);
+        const {min, max, autoMax} = normalizeRange(
+            this._config.backlights[name] ?? {},
+            info?.detectedMax ?? null
+        );
         if (!this._config.backlights[name] ||
             this._config.backlights[name].min !== min ||
             this._config.backlights[name].max !== max ||
@@ -316,21 +313,7 @@ export default class BacklightControllerPreferences extends ExtensionPreferences
     }
 
     _effectiveOrder(names) {
-        const configuredOrder = this._config.settings.order ?? [];
-        const seen = new Set();
-        const ordered = [];
-        for (const name of configuredOrder) {
-            if (!names.includes(name) || seen.has(name))
-                continue;
-            seen.add(name);
-            ordered.push(name);
-        }
-
-        const rest = names
-            .filter(name => !seen.has(name))
-            .sort((a, b) => a.localeCompare(b));
-
-        return [...ordered, ...rest];
+        return effectiveOrder(names, this._config.settings.order ?? []);
     }
 
     _getAllKnownDevices() {
@@ -407,7 +390,7 @@ export default class BacklightControllerPreferences extends ExtensionPreferences
     }
 
     _loadConfig() {
-        const initial = {version: 1, backlights: {}, settings: {order: [], hidden: []}};
+        const initial = createInitialConfig();
         let ok = false;
         let bytes = null;
         try {
@@ -425,37 +408,7 @@ export default class BacklightControllerPreferences extends ExtensionPreferences
 
         try {
             const parsed = JSON.parse(new TextDecoder().decode(bytes));
-            if (typeof parsed !== 'object' || parsed === null)
-                return initial;
-            if (!parsed.backlights || typeof parsed.backlights !== 'object')
-                parsed.backlights = {};
-            if (!parsed.settings || typeof parsed.settings !== 'object')
-                parsed.settings = {};
-            if (!Array.isArray(parsed.settings.order))
-                parsed.settings.order = [];
-            if (!Array.isArray(parsed.settings.hidden))
-                parsed.settings.hidden = [];
-            parsed.settings.order = parsed.settings.order
-                .filter(name => typeof name === 'string');
-            parsed.settings.hidden = parsed.settings.hidden
-                .filter(name => typeof name === 'string');
-            for (const [name, config] of Object.entries(parsed.backlights)) {
-                if (typeof config !== 'object' || config === null) {
-                    delete parsed.backlights[name];
-                    continue;
-                }
-
-                if (typeof config.alias !== 'string')
-                    delete config.alias;
-                else
-                    config.alias = config.alias.trim();
-
-                if (!config.alias)
-                    delete config.alias;
-            }
-            if (!Number.isInteger(parsed.version))
-                parsed.version = 1;
-            return parsed;
+            return normalizeConfig(parsed);
         } catch (error) {
             console.error(`[Backlight Controller] Failed to parse config: ${error}`);
             return initial;

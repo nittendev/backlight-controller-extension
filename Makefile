@@ -1,8 +1,8 @@
 UUID := backlight-controller@jonas
 EXT_DIR := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
-FILES := metadata.json extension.js prefs.js README.md
+FILES := metadata.json extension.js prefs.js logic.js README.md
 
-.PHONY: install enable disable remove reinstall
+.PHONY: install enable disable remove reinstall test
 
 install:
 	mkdir -p "$(EXT_DIR)"
@@ -25,3 +25,6 @@ remove:
 
 reinstall: disable install enable
 	@echo "Reinstalled $(UUID)"
+
+test:
+	gjs -m tests/logic.test.js

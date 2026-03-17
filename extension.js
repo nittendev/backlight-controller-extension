@@ -8,6 +8,14 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {
+    applyRangeUpdate,
+    clamp,
+    createInitialConfig,
+    normalizeAlias,
+    normalizeConfig,
+    sortDevicesByOrder,
+} from './logic.js';
 
 const SYS_BACKLIGHT_DIR = '/sys/class/backlight';
 
@@ -192,10 +200,9 @@ export default class BacklightControllerExtension extends Extension {
             const min = Number.isInteger(existing.min) ? existing.min : 0;
             const max = Number.isInteger(existing.max) ? existing.max : detectedMax;
             const clampedMax = Math.max(max, min + 1);
-            const clampedCurrent = this.clamp(current, min, clampedMax);
-            const alias = typeof existing.alias === 'string' ? existing.alias.trim() : '';
-            const storedAlias = typeof this._config.backlights[name]?.alias === 'string' ?
-                this._config.backlights[name].alias.trim() : '';
+            const clampedCurrent = clamp(current, min, clampedMax);
+            const alias = normalizeAlias(existing.alias);
+            const storedAlias = normalizeAlias(this._config.backlights[name]?.alias);
 
             if (!this._config.backlights[name] ||
                 this._config.backlights[name].min !== min ||
@@ -228,15 +235,7 @@ export default class BacklightControllerExtension extends Extension {
     }
 
     setDeviceRange(name, min, max) {
-        const existing = this._config.backlights[name] ?? {};
-        const nextMin = min ?? existing.min ?? 0;
-        const nextAutoMax = existing.autoMax ?? nextMin + 1;
-        const nextMax = max ?? existing.max ?? nextAutoMax;
-        this._config.backlights[name] = {
-            ...existing,
-            min: Math.min(nextMin, nextMax - 1),
-            max: Math.max(nextMax, nextMin + 1),
-        };
+        this._config.backlights[name] = applyRangeUpdate(this._config.backlights[name], min, max);
         this._saveConfig();
     }
 
@@ -256,12 +255,12 @@ export default class BacklightControllerExtension extends Extension {
 
     toSliderValue(current, min, max) {
         const span = Math.max(1, max - min);
-        return this.clamp((current - min) / span, 0, 1);
+        return clamp((current - min) / span, 0, 1);
     }
 
     fromSliderValue(value, min, max) {
         const span = Math.max(1, max - min);
-        return Math.round(min + span * this.clamp(value, 0, 1));
+        return Math.round(min + span * clamp(value, 0, 1));
     }
 
     writeBrightness(deviceName, value) {
@@ -269,12 +268,8 @@ export default class BacklightControllerExtension extends Extension {
         return this._writeSysfsText(path, `${value}\n`);
     }
 
-    clamp(value, min, max) {
-        return Math.min(Math.max(value, min), max);
-    }
-
     _loadConfig() {
-        const initial = {version: 1, backlights: {}, settings: {order: [], hidden: []}};
+        const initial = createInitialConfig();
         let ok = false;
         let bytes = null;
         try {
@@ -292,37 +287,7 @@ export default class BacklightControllerExtension extends Extension {
 
         try {
             const parsed = JSON.parse(new TextDecoder().decode(bytes));
-            if (typeof parsed !== 'object' || parsed === null)
-                return initial;
-            if (!parsed.backlights || typeof parsed.backlights !== 'object')
-                parsed.backlights = {};
-            if (!parsed.settings || typeof parsed.settings !== 'object')
-                parsed.settings = {};
-            if (!Array.isArray(parsed.settings.order))
-                parsed.settings.order = [];
-            if (!Array.isArray(parsed.settings.hidden))
-                parsed.settings.hidden = [];
-            parsed.settings.order = parsed.settings.order
-                .filter(name => typeof name === 'string');
-            parsed.settings.hidden = parsed.settings.hidden
-                .filter(name => typeof name === 'string');
-            for (const [name, config] of Object.entries(parsed.backlights)) {
-                if (typeof config !== 'object' || config === null) {
-                    delete parsed.backlights[name];
-                    continue;
-                }
-
-                if (typeof config.alias !== 'string')
-                    delete config.alias;
-                else
-                    config.alias = config.alias.trim();
-
-                if (!config.alias)
-                    delete config.alias;
-            }
-            if (!Number.isInteger(parsed.version))
-                parsed.version = 1;
-            return parsed;
+            return normalizeConfig(parsed);
         } catch (error) {
             console.error(`[Backlight Controller] Failed to parse config: ${error}`);
             return initial;
@@ -437,17 +402,7 @@ export default class BacklightControllerExtension extends Extension {
     }
 
     _sortByConfiguredOrder(devices) {
-        const order = this._config?.settings?.order ?? [];
-        const indexByName = new Map(order.map((name, index) => [name, index]));
-        return devices.slice().sort((a, b) => {
-            const aIndex = indexByName.get(a.name);
-            const bIndex = indexByName.get(b.name);
-            const aRank = aIndex === undefined ? Number.MAX_SAFE_INTEGER : aIndex;
-            const bRank = bIndex === undefined ? Number.MAX_SAFE_INTEGER : bIndex;
-            if (aRank !== bRank)
-                return aRank - bRank;
-            return a.name.localeCompare(b.name);
-        });
+        return sortDevicesByOrder(devices, this._config?.settings?.order ?? []);
     }
 
     _isBacklightHidden(name) {

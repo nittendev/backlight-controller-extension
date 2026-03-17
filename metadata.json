@@ -3,7 +3,8 @@
   "name": "Backlight Controller",
   "description": "Adds a sun icon indicator to the GNOME top bar.",
   "shell-version": [
-    "49"
+    "49",
+    "50"
   ],
   "version": 2
 }

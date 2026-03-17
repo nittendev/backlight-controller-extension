@@ -1,7 +1,6 @@
 # Backlight Controller GNOME Extension
 
-This extension adds a sun icon to the GNOME top bar (right/status area).
-It is intentionally targeted at GNOME Shell 49 only.
+This extension adds a sun icon to the GNOME top bar (right/status area) that lets you use brightness sliders for all available backlight devices.
 
 ## What it does
 
@@ -22,6 +21,7 @@ By default, the extension tries to write `config.json` in the extension director
 ## Install locally
 
 `make install`
+
 `make enable`
 
  * Tip: it's quite often that you need to go into extensions and manually enable it the first time on distros like Fedora.
@@ -32,10 +32,4 @@ By default, the extension tries to write `config.json` in the extension director
 
 - Writing to `/sys/class/backlight/*/brightness` may require permissions depending on your distro/udev setup.
 - If writes fail, GNOME Shell will show a notification and log details in the shell logs.
-
-## Manual verification checklist
-
-- Open and close the indicator menu repeatedly with no aliases configured; `config.json` should not change on each open.
-- Add an invalid range in `config.json` (for example `min >= max`) and reopen the menu; it should normalize once and stop rewriting.
-- With the extension active, drag a brightness slider quickly; brightness should track, but writes should be coalesced (fewer repeated errors/logs).
-- Temporarily make a backlight path unreadable/unavailable and reopen menu/preferences; it should skip the device instead of crashing.
+  - `journalctl --user /usr/bin/gnome-shell | rg "Backlight Controller|Sysfs write failed|Read failed"`
